@@ -477,9 +477,76 @@ static NSString* toBase64(NSData* data) {
                 NSString* extension = options.encodingType == EncodingTypePNG? @"png" : @"jpg";
                 NSString* filePath = [self tempFilePath:extension];
                 NSError* err = nil;
+		    
+		 //TODO:woguava 2018.03.21 get photo metadata begin.
+                bool debug = true;
+                self.data = data;
+                if ( options.usesGeolocation && options.sourceType == UIImagePickerControllerSourceTypePhotoLibrary)  {
+                    // get exif data, the code block is asynchronous
+                    NSURL *assetURL = [info objectForKey:UIImagePickerControllerReferenceURL];
+                    
+                    ALAssetsLibrary *library = [[ALAssetsLibrary alloc] init];
+                    
+                    dispatch_semaphore_t sema = dispatch_semaphore_create(0);
+                    dispatch_queue_t queue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT,0);
+                    dispatch_async(queue, ^{
+                        [library assetForURL:assetURL
+                             resultBlock:^(ALAsset *asset)  {
+                                 NSDictionary *metadata = asset.defaultRepresentation.metadata;
+                                 self.metadata = [[NSMutableDictionary alloc] init];
+                                 
+                                 NSMutableDictionary *EXIFDictionary = [[metadata objectForKey:(NSString*)kCGImagePropertyExifDictionary]mutableCopy];
+                                 if (EXIFDictionary) {
+                                     [self.metadata setObject:EXIFDictionary forKey:(NSString*)kCGImagePropertyExifDictionary];
+                                 }
+                                 
+                                 NSMutableDictionary *TIFFDictionary = [[metadata objectForKey:(NSString*)kCGImagePropertyTIFFDictionary]mutableCopy];
+                                 if (TIFFDictionary) {
+                                     [self.metadata setObject:TIFFDictionary forKey:(NSString*)kCGImagePropertyTIFFDictionary];
+                                 }
+                                 
+                                 NSMutableDictionary *GPSDictionary = [[metadata objectForKey:(NSString*)kCGImagePropertyGPSDictionary]mutableCopy];
+                                 if (GPSDictionary)  {
+                                     [self.metadata setObject:GPSDictionary forKey:(NSString*)kCGImagePropertyGPSDictionary];
+                                 }
+                                 
+                                 if (self.metadata){
+                                     
+                                     // add metadata to image that is written to temp file
+                                     CGImageSourceRef sourceImage = CGImageSourceCreateWithData((__bridge_retained CFDataRef)self.data, NULL);
+                                     CFStringRef sourceType = CGImageSourceGetType(sourceImage);
+                                     
+                                     CGImageDestinationRef destinationImage = CGImageDestinationCreateWithData((__bridge CFMutableDataRef)self.data, sourceType, 1, NULL);
+                                     CGImageDestinationAddImageFromSource(destinationImage, sourceImage, 0, (__bridge CFDictionaryRef)self.metadata);
+                                     
+                                     bool ok = false;
+                                     ok = CGImageDestinationFinalize(destinationImage);
+                                     if (ok) {
+                                         CIImage *testImage = [CIImage imageWithData:self.data];
+                                         NSDictionary *propDict = [testImage properties];
+                                         NSLog(@"PhotoLib Image properties after adding metadata %@", propDict);
+                                     }
+                                     
+                                     CFRelease(sourceImage);
+                                     CFRelease(destinationImage);
+                                 }
+                                 dispatch_semaphore_signal(sema);
+                             }
+                            failureBlock:^(NSError *error) {
+                                dispatch_semaphore_signal(sema);
+                            }];
+                    });
+                    dispatch_semaphore_wait(sema, DISPATCH_TIME_FOREVER);
+                }
+                if (debug) {
+                    CIImage *testImage = [CIImage imageWithData:self.data];
+                    NSDictionary *propDict = [testImage properties];
+                    NSLog(@"PhotoLibary Image properties after adding metadata %@", propDict);
+                }
+                //TODO:woguava 2018.03.21 get photo metadata end.
 
                 // save file
-                if (![data writeToFile:filePath options:NSAtomicWrite error:&err]) {
+                if (![self.data writeToFile:filePath options:NSAtomicWrite error:&err]) {
                     result = [CDVPluginResult resultWithStatus:CDVCommandStatus_IO_EXCEPTION messageAsString:[err localizedDescription]];
                 } else {
                     result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:[[self urlTransformer:[NSURL fileURLWithPath:filePath]] absoluteString]];
@@ -677,6 +744,14 @@ static NSString* toBase64(NSData* data) {
         CGImageDestinationRef destinationImage = CGImageDestinationCreateWithData((__bridge CFMutableDataRef)self.data, sourceType, 1, NULL);
         CGImageDestinationAddImageFromSource(destinationImage, sourceImage, 0, (__bridge CFDictionaryRef)self.metadata);
         CGImageDestinationFinalize(destinationImage);
+	    
+	//TODO:woguava 2018.03.21 add log show pic metadata
+        bool debug = true;
+        if (debug) {
+            CIImage *testImage = [CIImage imageWithData:self.data];
+            NSDictionary *propDict = [testImage properties];
+            NSLog(@"Camera Image properties after adding metadata %@", propDict);
+        }
 
         CFRelease(sourceImage);
         CFRelease(destinationImage);
